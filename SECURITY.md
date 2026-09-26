@@ -4,7 +4,7 @@
 
 Please report security vulnerabilities privately rather than opening a public GitHub issue.
 
-Open a [private security advisory](https://github.com/ThomasJenkinson/cjson-rs/security/advisories/new) on this repository. We will acknowledge receipt within 7 days and aim to provide a fix or mitigation within 30 days of disclosure.
+Open a [private security advisory](https://github.com/Gordion-Solutions/cjson-rs/security/advisories/new) on this repository. We will acknowledge receipt within 7 days and aim to provide a fix or mitigation within 30 days of disclosure.
 
 ## Supported versions
 
