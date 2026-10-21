@@ -117,6 +117,17 @@ The cdylib output is `libcjson.{so,dylib}` — drop-in named.
 |---|---|---|
 | Upstream tests that `#include "../cJSON.c"` directly (using internal `global_hooks` symbol) are not in the runner | These are white-box tests of cJSON's internals, not real drop-in compat tests. | Out of scope for drop-in validation |
 
+## Install
+
+```sh
+cjson-rs-ffi/tools/install.sh /usr/local     # or any prefix; needs a Rust toolchain
+cc prog.c $(pkg-config --cflags --libs libcjson) -o prog
+```
+
+This lays out files as upstream cJSON's own install does: `include/cjson/cJSON.h`, `libcjson.so.1` / `libcjson.1.dylib` (plus the unversioned and `1.7.19` names), `libcjson.a`, `lib/pkgconfig/libcjson.pc`, and `lib/cmake/cJSON/` for `find_package(cJSON)` with the `cJSON::cjson` target. The pkg-config and CMake files report version 1.7.19, the cJSON release whose ABI this implements. The header is upstream's, unchanged.
+
+`cargo build` alone writes `libcjson.so` / `libcjson.dylib`, but programs linked against cJSON look for the real file names. Use `install.sh`, or `cjson-rs-ffi/tools/stage.sh <dir>` to copy the build there without installing. Without the right names, a program can quietly load the system cJSON instead: check with `ldd` (Linux) or `DYLD_PRINT_LIBRARIES=1` (macOS).
+
 ## Build & test
 
 ```sh

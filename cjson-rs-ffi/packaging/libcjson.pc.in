@@ -1,0 +1,10 @@
+prefix=@PREFIX@
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: libcjson
+Version: @VERSION@
+Description: Ultralightweight JSON parser in ANSI C (cjson-rs: memory-safe Rust implementation of cJSON's ABI)
+Libs: -L${libdir} -lcjson
+Libs.private: @PRIVATE_LIBS@
+Cflags: -I${includedir}/cjson

@@ -4,6 +4,18 @@ All notable changes to this project are recorded here.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (with the usual pre-1.0 caveat that breaking changes can land in any minor version while we're in `0.x`).
 
+## [Unreleased]
+
+### Added
+
+- Drop-in packaging. The shared library now carries cJSON's own names (`libcjson.so.1`, `libcjson.1.dylib`) and exports only the 78 `cJSON_*` symbols (`cjson-rs-ffi/build.rs`, `cjson.map`, `exported_symbols.txt`).
+- `cjson-rs-ffi/tools/install.sh <prefix>` installs the library, upstream's `cJSON.h` (unchanged, v1.7.19) as `include/cjson/cJSON.h`, `libcjson.pc` for pkg-config and `cJSON::cjson` CMake package files, in cJSON's own layout. `tools/stage.sh <dir>` copies the build under the real file names without installing.
+- `cjson-rs-ffi/tests/c/run-install-test.sh` builds a C program against a scratch install through pkg-config and CMake and checks it loaded the installed library. Runs in CI on Linux and macOS.
+
+### Changed
+
+- The conformance and C smoke runners link the staged library, so they exercise the same file names a user gets.
+
 ## [0.2.0] — 2026-05-19
 
 ### Added

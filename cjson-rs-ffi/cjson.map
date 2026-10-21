@@ -1,0 +1,6 @@
+CJSON_1 {
+  global:
+    cJSON_*;
+  local:
+    *;
+};

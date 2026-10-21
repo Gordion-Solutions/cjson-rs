@@ -52,3 +52,30 @@ jobs:
         uses: Swatinem/rust-cache@v2
       - name: Run upstream cJSON test runner
         run: bash conformance/run-upstream-tests.sh
+
+  install-test:
+    name: Drop-in install (pkg-config + CMake, soname, exported symbols)
+    runs-on: ${{ matrix.os }}
+    needs: rust-tests
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo build artefacts
+        uses: Swatinem/rust-cache@v2
+      - name: Install pkg-config and CMake (macOS)
+        if: runner.os == 'macOS'
+        run: brew install pkg-config cmake
+      - name: Install into a scratch prefix and build C against it
+        run: sh cjson-rs-ffi/tests/c/run-install-test.sh
+      - name: Check soname and exported symbols (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo build --release -p cjson-rs-ffi
+          lib=target/release/libcjson.so
+          readelf -d "$lib" | grep 'SONAME.*libcjson\.so\.1'
+          n=$(nm -D --defined-only "$lib" | grep -vc ' T cJSON_\| D cJSON_' || true)
+          test "$n" = 0 || { nm -D --defined-only "$lib" | grep -v ' cJSON_'; exit 1; }

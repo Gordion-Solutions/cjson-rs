@@ -7,8 +7,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-# Build libcjson.{dylib,so}
-cargo build --release --workspace
+# Build libcjson and stage it under cJSON's real file names.
+STAGE="$(cd .. && pwd)/target/release/stage"
+sh tools/stage.sh "$STAGE"
 
 # Pick the right shared-library extension.
 case "$(uname -s)" in
@@ -17,14 +18,14 @@ case "$(uname -s)" in
     *)       echo "unsupported OS: $(uname -s)" >&2; exit 1 ;;
 esac
 
-REL="../target/release"
+REL="$STAGE"
 [ -f "$REL/$LIB" ] || { echo "missing $REL/$LIB" >&2; exit 1; }
 
 # Compile the C smoke test.
 cc -Wall -Wextra -Werror \
    -Itests/c \
    tests/c/smoke.c \
-   -L"$REL" -lcjson \
+   -L"$REL" -lcjson -Wl,-rpath,"$REL" \
    -o tests/c/smoke
 
 # Run it with the lib path resolvable.

@@ -12,8 +12,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# Build our libcjson.{dylib,so}.
-cargo build --release --workspace >/dev/null
+# Build our libcjson and stage it under cJSON's real file names
+# (libcjson.1.dylib / libcjson.so.1), which is what the installed name expects.
+STAGE="$PWD/target/release/stage"
+sh cjson-rs-ffi/tools/stage.sh "$STAGE"
 
 UPSTREAM=conformance/upstream-tests
 SHIM=conformance/shim
@@ -60,7 +62,7 @@ for t in "${TESTS[@]}"; do
         -I"$UNITY" \
         -I"$TESTSDIR" \
         "$src" "$TESTSDIR/unity_setup.c" "$UNITY/unity.c" \
-        -L"target/release" -lcjson \
+        -L"$STAGE" -lcjson -Wl,-rpath,"$STAGE" \
         -o "$bin" 2>"$OUT/${t}.cc.log"; then
         : # compiled OK
     else
@@ -73,7 +75,7 @@ for t in "${TESTS[@]}"; do
     # because they read inputs/*.json by relative path.
     BIN_ABS="$PWD/$bin"
     LOG_ABS="$PWD/$OUT/${t}.run.log"
-    LIB_ABS="$PWD/target/release"
+    LIB_ABS="$STAGE"
     pushd "$TESTSDIR" >/dev/null
     if env "$LIB_VAR=$LIB_ABS" "$BIN_ABS" >"$LOG_ABS" 2>&1; then
         pass+=1
