@@ -801,3 +801,71 @@ fn parse_with_opts_lax_incomplete_value_still_errors() {
 fn _silence_unused() {
     let _ = (CJSON_ARRAY, CJSON_NUMBER, CJSON_OBJECT, CJSON_STRING);
 }
+
+// Raw items carry caller-supplied JSON text and must be printed verbatim,
+// not quoted as strings. Found by Mosquitto's dynamic-security tests, which
+// send `{"count":1}` built with cJSON_AddRawToObject.
+unsafe fn take_string(p: *mut c_char) -> String {
+    assert!(!p.is_null());
+    let s = CStr::from_ptr(p).to_str().unwrap().to_string();
+    cJSON_free(p as *mut std::ffi::c_void);
+    s
+}
+
+#[test]
+fn raw_member_prints_verbatim_unformatted() {
+    unsafe {
+        let obj = cJSON_CreateObject();
+        assert!(!cJSON_AddRawToObject(obj, cstr("count").as_ptr(), cstr("1").as_ptr()).is_null());
+        assert!(!cJSON_AddRawToObject(obj, cstr("nested").as_ptr(), cstr("{\"a\":[1,2]}").as_ptr()).is_null());
+        assert!(!cJSON_AddStringToObject(obj, cstr("s").as_ptr(), cstr("1").as_ptr()).is_null());
+        assert_eq!(take_string(cJSON_PrintUnformatted(obj)), r#"{"count":1,"nested":{"a":[1,2]},"s":"1"}"#);
+        cJSON_Delete(obj);
+    }
+}
+
+#[test]
+fn raw_member_prints_verbatim_pretty() {
+    unsafe {
+        let obj = cJSON_CreateObject();
+        cJSON_AddRawToObject(obj, cstr("count").as_ptr(), cstr("1").as_ptr());
+        assert_eq!(take_string(cJSON_Print(obj)), "{\n\t\"count\":\t1\n}");
+        cJSON_Delete(obj);
+    }
+}
+
+#[test]
+fn raw_item_prints_verbatim_preallocated_and_toplevel() {
+    unsafe {
+        let raw = cJSON_CreateRaw(cstr("[true,null]").as_ptr());
+        assert_eq!(take_string(cJSON_PrintUnformatted(raw)), "[true,null]");
+        let mut buf = vec![0 as c_char; 32];
+        assert_ne!(cJSON_PrintPreallocated(raw, buf.as_mut_ptr(), buf.len() as i32, 0), 0);
+        assert_eq!(CStr::from_ptr(buf.as_ptr()).to_str().unwrap(), "[true,null]");
+        cJSON_Delete(raw);
+    }
+}
+
+#[test]
+fn raw_round_trip_keeps_number_type() {
+    unsafe {
+        let obj = cJSON_CreateObject();
+        cJSON_AddRawToObject(obj, cstr("count").as_ptr(), cstr("1").as_ptr());
+        let text = cJSON_PrintUnformatted(obj);
+        let back = cJSON_Parse(text);
+        let count = cJSON_GetObjectItem(back, cstr("count").as_ptr());
+        assert_ne!(cJSON_IsNumber(count), 0);
+        assert_eq!((*count).valueint, 1);
+        cJSON_free(text as *mut std::ffi::c_void);
+        cJSON_Delete(back);
+        cJSON_Delete(obj);
+    }
+}
+
+#[test]
+fn raw_without_text_fails_to_print() {
+    // Upstream returns NULL for a raw node whose text is missing.
+    unsafe {
+        assert!(cJSON_CreateRaw(std::ptr::null()).is_null());
+    }
+}

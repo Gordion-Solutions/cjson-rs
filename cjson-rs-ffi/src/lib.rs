@@ -26,7 +26,7 @@ use crate::types::{
     cJSON, CJSON_ARRAY, CJSON_FALSE, CJSON_INVALID, CJSON_IS_REFERENCE, CJSON_NULL, CJSON_NUMBER,
     CJSON_OBJECT, CJSON_RAW, CJSON_STRING, CJSON_STRING_IS_CONST, CJSON_TRUE,
 };
-use cjson_rs::{parse, parse_prefix, serialise, Value};
+use cjson_rs::{parse, parse_prefix, Value};
 use std::cell::Cell;
 use std::ffi::{c_char, c_double, c_int, CStr};
 use std::ptr;
@@ -167,11 +167,11 @@ unsafe fn print_impl(item: *const cJSON, pretty: bool) -> *mut c_char {
             write_cjson_pretty(&mut out, item, 0);
             out
         } else {
-            let value = match cjson_to_value(item) {
-                Some(v) => v,
-                None => return ptr::null_mut(),
-            };
-            serialise(&value)
+            let mut out = String::new();
+            if !write_cjson_compact(&mut out, item) {
+                return ptr::null_mut();
+            }
+            out
         };
         let bytes = s.as_bytes();
         let buf = alloc_hooks::hook_malloc(bytes.len() + 1) as *mut c_char;
@@ -285,6 +285,90 @@ unsafe fn write_cjson_pretty(out: &mut String, item: *const cJSON, depth: usize)
         }
         _ => out.push_str("null"),
     }
+}
+
+/// Walk a cJSON tree and emit compact JSON, as `cJSON_PrintUnformatted`
+/// does. Raw nodes (`cJSON_CreateRaw`, `cJSON_AddRawToObject`) carry
+/// caller-supplied JSON text and are emitted verbatim, not as strings.
+///
+/// Returns false when the tree cannot be printed: a NULL node, an
+/// unsupported type, a raw node without text, or text that is not UTF-8.
+/// Numbers and strings are written exactly as `cjson_rs::serialise` writes
+/// them, so output for trees without raw nodes is unchanged.
+unsafe fn write_cjson_compact(out: &mut String, item: *const cJSON) -> bool {
+    if item.is_null() {
+        return false;
+    }
+    match (*item).type_ & 0xFF {
+        x if x == CJSON_NULL => out.push_str("null"),
+        x if x == CJSON_TRUE => out.push_str("true"),
+        x if x == CJSON_FALSE => out.push_str("false"),
+        x if x == CJSON_NUMBER => {
+            let n = (*item).valuedouble;
+            if n.is_finite() {
+                use std::fmt::Write;
+                let _ = write!(out, "{n}");
+            } else {
+                out.push_str("null");
+            }
+        }
+        x if x == CJSON_STRING => {
+            if (*item).valuestring.is_null() {
+                out.push_str("\"\"");
+            } else if let Ok(s) = CStr::from_ptr((*item).valuestring).to_str() {
+                write_escaped(out, s);
+            } else {
+                return false;
+            }
+        }
+        x if x == CJSON_RAW => {
+            if (*item).valuestring.is_null() {
+                return false;
+            }
+            match CStr::from_ptr((*item).valuestring).to_str() {
+                Ok(s) => out.push_str(s),
+                Err(_) => return false,
+            }
+        }
+        x if x == CJSON_ARRAY => {
+            out.push('[');
+            let mut cur = (*item).child;
+            while !cur.is_null() {
+                if cur != (*item).child {
+                    out.push(',');
+                }
+                if !write_cjson_compact(out, cur) {
+                    return false;
+                }
+                cur = (*cur).next;
+            }
+            out.push(']');
+        }
+        x if x == CJSON_OBJECT => {
+            out.push('{');
+            let mut cur = (*item).child;
+            while !cur.is_null() {
+                if cur != (*item).child {
+                    out.push(',');
+                }
+                if (*cur).string.is_null() {
+                    out.push_str("\"\"");
+                } else if let Ok(k) = CStr::from_ptr((*cur).string).to_str() {
+                    write_escaped(out, k);
+                } else {
+                    return false;
+                }
+                out.push(':');
+                if !write_cjson_compact(out, cur) {
+                    return false;
+                }
+                cur = (*cur).next;
+            }
+            out.push('}');
+        }
+        _ => return false,
+    }
+    true
 }
 
 fn write_escaped(out: &mut String, s: &str) {
@@ -535,9 +619,9 @@ unsafe fn cjson_to_value(item: *const cJSON) -> Option<Value> {
         x if x == CJSON_FALSE => Value::Bool(false),
         x if x == CJSON_NUMBER => Value::Number((*item).valuedouble),
         x if x == CJSON_STRING || x == CJSON_RAW => {
-            // Raw nodes carry pre-serialised JSON in valuestring. For
-            // comparison purposes we treat them as strings; the serialiser
-            // path for Raw will be addressed separately.
+            // Raw nodes carry pre-serialised JSON in valuestring. This
+            // conversion (used by cJSON_Compare) treats them as strings, so
+            // it must not be used to print: see write_cjson_compact.
             if (*item).valuestring.is_null() {
                 Value::String(String::new())
             } else {
@@ -1495,11 +1579,11 @@ pub unsafe extern "C" fn cJSON_PrintPreallocated(
             write_cjson_pretty(&mut out, item, 0);
             out
         } else {
-            let value = match cjson_to_value(item) {
-                Some(v) => v,
-                None => return CJSON_BOOL_FALSE,
-            };
-            serialise(&value)
+            let mut out = String::new();
+            if !write_cjson_compact(&mut out, item) {
+                return CJSON_BOOL_FALSE;
+            }
+            out
         };
         let bytes = s.as_bytes();
         let needed = bytes.len().saturating_add(1);
