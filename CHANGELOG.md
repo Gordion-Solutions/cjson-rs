@@ -12,6 +12,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 - `cjson-rs-ffi/tools/install.sh <prefix>` installs the library, upstream's `cJSON.h` (unchanged, v1.7.19) as `include/cjson/cJSON.h`, `libcjson.pc` for pkg-config and `cJSON::cjson` CMake package files, in cJSON's own layout. `tools/stage.sh <dir>` copies the build under the real file names without installing.
 - `cjson-rs-ffi/tests/c/run-install-test.sh` builds a C program against a scratch install through pkg-config and CMake and checks it loaded the installed library. Runs in CI on Linux and macOS.
 
+- Release artefacts. `.github/workflows/release.yml` builds on Linux x86_64, Linux arm64 and macOS arm64 when a `v*` tag is pushed, tests each archive as a user would (unpack, `install.sh`, build C through pkg-config), and attaches `cjson-rs-<version>-<platform>.tar.gz`, its `.sha256` and a combined `SHA256SUMS` to the GitHub release. "Run workflow" builds and tests without publishing. Archives are made by `cjson-rs-ffi/tools/package.sh`; each carries an `install.sh` that needs no Rust toolchain.
+
 ### Changed
 
 - The conformance and C smoke runners link the staged library, so they exercise the same file names a user gets.

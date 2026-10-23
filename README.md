@@ -119,6 +119,14 @@ The cdylib output is `libcjson.{so,dylib}` — drop-in named.
 
 ## Install
 
+**Prebuilt (no Rust needed).** Download `cjson-rs-<version>-<platform>.tar.gz` from the [releases page](https://github.com/Gordion-Solutions/cjson-rs/releases) (Linux x86_64, Linux arm64, macOS arm64), check it against `SHA256SUMS`, then:
+
+```sh
+tar xzf cjson-rs-*.tar.gz && cd cjson-rs-*/ && ./install.sh /usr/local
+```
+
+**From source** (needs a Rust toolchain):
+
 ```sh
 cjson-rs-ffi/tools/install.sh /usr/local     # or any prefix; needs a Rust toolchain
 cc prog.c $(pkg-config --cflags --libs libcjson) -o prog
