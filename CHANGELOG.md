@@ -46,4 +46,4 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## [0.0.1] — Initial release
 
-Initial public release of the clean-room Rust implementation with C ABI shim.
+Initial public release of the from-specification Rust implementation with C ABI shim.
