@@ -178,6 +178,23 @@ impl<'a> Tokeniser<'a> {
 
         let mut out = String::new();
         loop {
+            // Fast path: consume a run of ordinary unescaped ASCII bytes and
+            // append them in one copy, rather than one `char` at a time.
+            // The run is ASCII by construction, so it is always valid UTF-8.
+            let run_start = self.pos.offset;
+            while let Some(b) = self.peek() {
+                if b == b'"' || b == b'\\' || b < 0x20 || b >= 0x80 {
+                    break;
+                }
+                self.advance();
+            }
+            if self.pos.offset > run_start {
+                match core::str::from_utf8(&self.input[run_start..self.pos.offset]) {
+                    Ok(s) => out.push_str(s),
+                    Err(_) => unreachable!("ASCII run is valid UTF-8"),
+                }
+            }
+
             let b = self.peek().ok_or(Error::UnexpectedEof { pos: start })?;
             match b {
                 b'"' => {
