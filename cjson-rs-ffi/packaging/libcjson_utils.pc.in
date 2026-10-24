@@ -1,0 +1,10 @@
+prefix=@PREFIX@
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: libcjson_utils
+Version: @VERSION@
+Description: cJSON_Utils — JSON Pointer/Patch/Merge Patch (cjson-rs: memory-safe Rust implementation of cJSON_Utils' ABI)
+Requires: libcjson
+Libs: -L${libdir} -lcjson_utils
+Cflags: -I${includedir}/cjson

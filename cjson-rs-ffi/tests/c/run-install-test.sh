@@ -30,6 +30,13 @@ cc -Wall -Wextra -Werror "$here/install-probe.c" $(pkg-config --cflags --libs li
 "$tmp/probe_pc" >/dev/null
 check "$tmp/probe_pc" pkg-config
 
+# cJSON_Utils through its own pkg-config file (libcjson_utils).
+pkg-config --exists libcjson_utils
+cc -Wall -Wextra -Werror "$here/install-probe.c" $(pkg-config --cflags --libs libcjson_utils) \
+   -Wl,-rpath,"$tmp/prefix/lib" -o "$tmp/probe_utils_pc"
+"$tmp/probe_utils_pc" >/dev/null
+check "$tmp/probe_utils_pc" "pkg-config (utils)"
+
 if command -v cmake >/dev/null 2>&1; then
   mkdir "$tmp/cm"
   cat > "$tmp/cm/CMakeLists.txt" <<CM
@@ -38,12 +45,16 @@ project(probe C)
 find_package(cJSON 1.7 REQUIRED)
 add_executable(probe $here/install-probe.c)
 target_link_libraries(probe cJSON::cjson)
+add_executable(probe_utils $here/install-probe.c)
+target_link_libraries(probe_utils cJSON::cjson_utils)
 CM
   cmake -S "$tmp/cm" -B "$tmp/cm/b" -DCMAKE_PREFIX_PATH="$tmp/prefix" \
         -DCMAKE_BUILD_RPATH="$tmp/prefix/lib" >/dev/null
   cmake --build "$tmp/cm/b" >/dev/null
   "$tmp/cm/b/probe" >/dev/null
   check "$tmp/cm/b/probe" cmake
+  "$tmp/cm/b/probe_utils" >/dev/null
+  check "$tmp/cm/b/probe_utils" "cmake (utils)"
 else
   echo "cmake: skipped (not installed)"
 fi
