@@ -8,8 +8,11 @@ on:
 
 jobs:
   rust-tests:
-    name: Rust tests (tokeniser, parser, serialiser, FFI smoke)
-    runs-on: ubuntu-latest
+    name: Rust tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,6 +25,47 @@ jobs:
         run: cargo build --release --verbose --workspace
       - name: cargo test --workspace
         run: cargo test --release --verbose --workspace --no-fail-fast
+
+  msrv:
+    name: MSRV (Rust 1.74)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Rust 1.74
+        uses: dtolnay/rust-toolchain@1.74.0
+      - name: Cache cargo build artefacts
+        uses: Swatinem/rust-cache@v2
+      # Resolve a lockfile this toolchain can read (committed lock is v4).
+      - name: Generate a compatible lockfile
+        run: cargo +1.74.0 generate-lockfile
+      - name: cargo build --workspace
+        run: cargo +1.74.0 build --release --workspace
+      - name: cargo test --workspace
+        run: cargo +1.74.0 test --release --workspace --no-fail-fast
+
+  fuzz:
+    name: Fuzz (short run, libFuzzer + ASan)
+    runs-on: ubuntu-latest
+    needs: rust-tests
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install nightly + cargo-fuzz
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Cache cargo build artefacts
+        uses: Swatinem/rust-cache@v2
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz each target for 60s
+        working-directory: cjson-rs-ffi
+        run: |
+          for t in fuzz_parse fuzz_ffi_roundtrip; do
+            echo "== fuzzing $t =="
+            cargo +nightly fuzz run "$t" -- -max_total_time=60 -rss_limit_mb=4096
+          done
 
   c-smoke:
     name: C smoke test (compile + link libcjson.so)
@@ -77,5 +121,7 @@ jobs:
           cargo build --release -p cjson-rs-ffi
           lib=target/release/libcjson.so
           readelf -d "$lib" | grep 'SONAME.*libcjson\.so\.1'
-          n=$(nm -D --defined-only "$lib" | grep -vc ' T cJSON_\| D cJSON_' || true)
-          test "$n" = 0 || { nm -D --defined-only "$lib" | grep -v ' cJSON_'; exit 1; }
+          # Only cJSON_* and cJSONUtils_* may be exported — no Rust internals.
+          allow=' T cJSON_\| D cJSON_\| T cJSONUtils_\| D cJSONUtils_'
+          n=$(nm -D --defined-only "$lib" | grep -vc "$allow" || true)
+          test "$n" = 0 || { nm -D --defined-only "$lib" | grep -v ' cJSON_\| cJSONUtils_'; exit 1; }

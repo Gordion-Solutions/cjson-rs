@@ -22,6 +22,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 ### Changed
 
 - The conformance and C smoke runners link the staged library, so they exercise the same file names a user gets.
+- MSRV lowered from 1.74 (was declared 1.94). Verified: the whole workspace builds and all tests pass on Rust 1.74.0. CI gained an MSRV job that builds and tests on 1.74, a `macos-latest` leg of the Rust test suite, and a short libFuzzer+ASan run (60s per target) of `fuzz_parse` and `fuzz_ffi_roundtrip`.
 
 ## [0.2.0] — 2026-05-19
 
