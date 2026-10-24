@@ -1,3 +1,7 @@
+_cJSONUtils_GetPointer
+_cJSONUtils_GetPointerCaseSensitive
+_cJSONUtils_MergePatch
+_cJSONUtils_MergePatchCaseSensitive
 _cJSON_AddArrayToObject
 _cJSON_AddBoolToObject
 _cJSON_AddFalseToObject

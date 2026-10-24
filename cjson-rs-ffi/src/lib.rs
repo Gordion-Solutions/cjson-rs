@@ -16,6 +16,8 @@ mod alloc_hooks;
 mod convert;
 mod panic_guard;
 pub mod types;
+mod utils;
+pub use utils::*;
 
 use crate::convert::{
     alloc_cstr, attach_child, attach_named_child, child_at_index, clamp_to_int, detach,
