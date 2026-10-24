@@ -8,6 +8,8 @@ A memory-safe drop-in for C's [cJSON](https://github.com/DaveGamble/cJSON): it b
 
 > **Published as** [`cjson-safe`](https://crates.io/crates/cjson-safe) on crates.io (the safe core is the separate `cjson-safe-core` crate, its engine). The repository stays `cjson-rs`.
 
+Project page: <https://gordionsolutions.co.uk/software/#cjson-safe>
+
 ## Quick example
 
 ### From C (drop-in libcjson replacement)
