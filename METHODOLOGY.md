@@ -1,6 +1,6 @@
 # cjson-rs — Methodology
 
-## Clean-room declaration
+## Written from the specification
 
 This implementation is built from the JSON specification ([RFC 8259](https://datatracker.ietf.org/doc/html/rfc8259), December 2017), not from cJSON's C source. The parser, the value model, and the serialiser are written in Rust without reference to `cJSON.c`.
 

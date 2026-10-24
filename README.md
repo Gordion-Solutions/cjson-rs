@@ -62,7 +62,7 @@ assert_eq!(round_tripped, r#"{"name":"alice","age":30}"#);
 
 ## What this is
 
-A clean-room Rust implementation of a JSON parser, designed to:
+A Rust implementation of a JSON parser written from the specification, designed to:
 
 1. **Pass the upstream cJSON test suite** when linked as `libcjson.{so,dylib}` (binary-compatible drop-in replacement).
 2. **Eliminate the C memory-safety bug class.** Recent cJSON CVEs (CVE-2024-31755, CVE-2023-50471, CVE-2023-50472) are null pointer dereferences and missing type checks — gone by construction in Rust.
@@ -207,7 +207,7 @@ cargo +nightly fuzz run fuzz_ffi_roundtrip -- -max_total_time=60
 │   ├── upstream-tests/         # git submodule → DaveGamble/cJSON
 │   ├── shim/common.h           # replaces upstream common.h (public API only)
 │   └── run-upstream-tests.sh   # runner — links upstream tests against libcjson.dylib
-└── METHODOLOGY.md              # clean-room declaration
+└── METHODOLOGY.md              # written-from-the-specification declaration
 ```
 
 ## License

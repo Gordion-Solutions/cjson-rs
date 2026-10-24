@@ -14,7 +14,7 @@ This project is pre-1.0. Only the latest released version is supported.
 
 In scope:
 
-- Memory safety violations in the `cjson-rs-ffi` crate or anything it exposes via the `cJSON_*` C ABI.
+- Memory safety violations in the `cjson-safe` crate (`cjson-rs-ffi`) or anything it exposes via the `cJSON_*` / `cJSONUtils_*` C ABI.
 - Parser bugs in `cjson-rs` that cause panics, infinite loops, or pathological resource consumption on adversarial input.
 - Divergence from RFC 8259 conformance that creates a security-relevant ambiguity.
 - Divergence from upstream cJSON's documented behaviour that breaks the drop-in compatibility claim.
