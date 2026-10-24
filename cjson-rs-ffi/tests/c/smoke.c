@@ -20,7 +20,7 @@
 static int test_version(void) {
     const char *v = cJSON_Version();
     CHECK(v != NULL, "cJSON_Version returned NULL");
-    CHECK(strstr(v, "cjson-rs") != NULL, "version string did not contain cjson-rs");
+    CHECK(strstr(v, "cjson-safe") != NULL, "version string did not contain cjson-safe");
     printf("  version: %s\n", v);
     return 0;
 }
