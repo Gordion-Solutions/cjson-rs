@@ -11,22 +11,46 @@
 //! NULL, matching cJSON's "return NULL / return non-zero on failure"
 //! convention.
 
+use crate::convert::alloc_cstr;
 use crate::panic_guard::guard;
 use crate::types::cJSON;
 use crate::cJSON_bool;
+use std::cmp::Ordering;
 use std::ffi::{c_char, c_int, CStr};
 use std::ptr;
 
 // The building blocks, all exported from lib.rs.
 use crate::{
-    cJSON_AddItemToObject, cJSON_CreateObject, cJSON_Delete,
-    cJSON_DeleteItemFromObject, cJSON_DeleteItemFromObjectCaseSensitive,
-    cJSON_DetachItemFromObject, cJSON_DetachItemFromObjectCaseSensitive,
-    cJSON_Duplicate, cJSON_GetArrayItem, cJSON_GetArraySize, cJSON_IsArray,
-    cJSON_IsNull, cJSON_IsObject,
+    cJSON_AddItemToObject, cJSON_Compare, cJSON_CreateNull, cJSON_CreateObject,
+    cJSON_Delete, cJSON_DeleteItemFromObject,
+    cJSON_DeleteItemFromObjectCaseSensitive, cJSON_DetachItemFromObject,
+    cJSON_DetachItemFromObjectCaseSensitive, cJSON_Duplicate, cJSON_GetArrayItem,
+    cJSON_GetArraySize, cJSON_IsArray, cJSON_IsNull, cJSON_IsObject,
 };
 
 const TRUE: cJSON_bool = 1;
+
+/// Compare two object-member keys. Case-insensitive folding is ASCII-only,
+/// matching cJSON's own `case_insensitive_strcmp`.
+fn compare_keys(a: &[u8], b: &[u8], case_sensitive: bool) -> Ordering {
+    if case_sensitive {
+        a.cmp(b)
+    } else {
+        let la = a.iter().map(|c| c.to_ascii_lowercase());
+        let lb = b.iter().map(|c| c.to_ascii_lowercase());
+        la.cmp(lb)
+    }
+}
+
+/// The NUL-terminated key bytes of an object member (empty if unnamed).
+unsafe fn key_bytes<'a>(node: *const cJSON) -> &'a [u8] {
+    let s = (*node).string;
+    if s.is_null() {
+        &[]
+    } else {
+        CStr::from_ptr(s).to_bytes()
+    }
+}
 
 // ---- JSON Pointer (RFC 6901) ------------------------------------------------
 
@@ -198,6 +222,139 @@ unsafe fn merge_patch(mut target: *mut cJSON, patch: *const cJSON, case_sensitiv
     target
 }
 
+// ---- Find pointer (RFC 6901 encoding) ---------------------------------------
+
+/// Encode a reference token: `~` → `~0`, `/` → `~1` (RFC 6901 §3).
+fn encode_token(key: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(key.len());
+    for &b in key {
+        match b {
+            b'~' => out.extend_from_slice(b"~0"),
+            b'/' => out.extend_from_slice(b"~1"),
+            _ => out.push(b),
+        }
+    }
+    out
+}
+
+/// Depth-first search for `target` under `haystack`, building the JSON
+/// Pointer path to it. Returns the path bytes (empty when
+/// `haystack == target`), or None if not found.
+unsafe fn find_path(haystack: *const cJSON, target: *const cJSON) -> Option<Vec<u8>> {
+    if haystack == target {
+        return Some(Vec::new());
+    }
+    if haystack.is_null() {
+        return None;
+    }
+
+    if cJSON_IsArray(haystack) == TRUE {
+        let mut index: usize = 0;
+        let mut child = (*haystack).child;
+        while !child.is_null() {
+            if let Some(sub) = find_path(child, target) {
+                let mut path = format!("/{index}").into_bytes();
+                path.extend_from_slice(&sub);
+                return Some(path);
+            }
+            index += 1;
+            child = (*child).next;
+        }
+    } else if cJSON_IsObject(haystack) == TRUE {
+        let mut child = (*haystack).child;
+        while !child.is_null() {
+            if let Some(sub) = find_path(child, target) {
+                let mut path = vec![b'/'];
+                path.extend_from_slice(&encode_token(key_bytes(child)));
+                path.extend_from_slice(&sub);
+                return Some(path);
+            }
+            child = (*child).next;
+        }
+    }
+    None
+}
+
+// ---- Sort object members ----------------------------------------------------
+
+/// Reorder an object's direct members by key (stable), in place. Not
+/// recursive — matches cJSON's `cJSONUtils_SortObject`.
+unsafe fn sort_object(object: *mut cJSON, case_sensitive: bool) {
+    if object.is_null() || cJSON_IsObject(object) != TRUE {
+        return;
+    }
+    let mut children: Vec<*mut cJSON> = Vec::new();
+    let mut child = (*object).child;
+    while !child.is_null() {
+        children.push(child);
+        child = (*child).next;
+    }
+    if children.len() < 2 {
+        return;
+    }
+    children.sort_by(|&a, &b| compare_keys(key_bytes(a), key_bytes(b), case_sensitive));
+
+    // Relink the doubly-linked list in the new order.
+    let n = children.len();
+    for i in 0..n {
+        let node = children[i];
+        (*node).prev = if i == 0 { ptr::null_mut() } else { children[i - 1] };
+        (*node).next = if i + 1 == n { ptr::null_mut() } else { children[i + 1] };
+    }
+    (*object).child = children[0];
+}
+
+// ---- Generate merge patch (RFC 7386, reverse) -------------------------------
+
+/// Produce a merge patch that turns `from` into `to`: the patch `p` such that
+/// `MergePatch(dup(from), p)` equals `to`. Returns NULL when `from` and `to`
+/// are already equal (no changes needed).
+unsafe fn generate_merge_patch(from: *const cJSON, to: *const cJSON, case_sensitive: bool) -> *mut cJSON {
+    let both_objects = !from.is_null()
+        && !to.is_null()
+        && cJSON_IsObject(from) == TRUE
+        && cJSON_IsObject(to) == TRUE;
+
+    if !both_objects {
+        if !from.is_null() && cJSON_Compare(from, to, case_sensitive as cJSON_bool) == TRUE {
+            return ptr::null_mut();
+        }
+        return cJSON_Duplicate(to, TRUE);
+    }
+
+    let patch = cJSON_CreateObject();
+    if patch.is_null() {
+        return ptr::null_mut();
+    }
+
+    // Members present in `from` but not in `to`: emit null (remove).
+    let mut fc = (*from).child;
+    while !fc.is_null() {
+        let key = key_bytes(fc);
+        if object_child_by_key(to, key, case_sensitive).is_null() {
+            cJSON_AddItemToObject(patch, (*fc).string, cJSON_CreateNull());
+        }
+        fc = (*fc).next;
+    }
+
+    // Members in `to`: add when new, recurse when changed, skip when equal.
+    let mut tc = (*to).child;
+    while !tc.is_null() {
+        let key = key_bytes(tc);
+        let from_child = object_child_by_key(from, key, case_sensitive);
+        if from_child.is_null() {
+            cJSON_AddItemToObject(patch, (*tc).string, cJSON_Duplicate(tc, TRUE));
+        } else if cJSON_Compare(from_child, tc, case_sensitive as cJSON_bool) != TRUE {
+            let sub = generate_merge_patch(from_child, tc, case_sensitive);
+            if !sub.is_null() {
+                cJSON_AddItemToObject(patch, (*tc).string, sub);
+            }
+        }
+        tc = (*tc).next;
+    }
+    patch
+}
+
 // ---- Public C ABI -----------------------------------------------------------
 
 #[no_mangle]
@@ -224,4 +381,48 @@ pub unsafe extern "C" fn cJSONUtils_MergePatchCaseSensitive(
     patch: *const cJSON,
 ) -> *mut cJSON {
     guard(ptr::null_mut(), || merge_patch(target, patch, true))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cJSONUtils_FindPointerFromObjectTo(
+    object: *const cJSON,
+    target: *const cJSON,
+) -> *mut c_char {
+    guard(ptr::null_mut(), || {
+        if object.is_null() || target.is_null() {
+            return ptr::null_mut();
+        }
+        match find_path(object, target) {
+            Some(path) => {
+                // path is ASCII pointer syntax plus raw key bytes; build a
+                // C string from the bytes directly.
+                let s = String::from_utf8_lossy(&path);
+                alloc_cstr(&s)
+            }
+            None => ptr::null_mut(),
+        }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cJSONUtils_SortObject(object: *mut cJSON) {
+    guard((), || sort_object(object, false))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cJSONUtils_SortObjectCaseSensitive(object: *mut cJSON) {
+    guard((), || sort_object(object, true))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cJSONUtils_GenerateMergePatch(from: *mut cJSON, to: *mut cJSON) -> *mut cJSON {
+    guard(ptr::null_mut(), || generate_merge_patch(from, to, false))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cJSONUtils_GenerateMergePatchCaseSensitive(
+    from: *mut cJSON,
+    to: *mut cJSON,
+) -> *mut cJSON {
+    guard(ptr::null_mut(), || generate_merge_patch(from, to, true))
 }
