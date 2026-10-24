@@ -1,7 +1,0 @@
-CJSON_1 {
-  global:
-    cJSON_*;
-    cJSONUtils_*;
-  local:
-    *;
-};
