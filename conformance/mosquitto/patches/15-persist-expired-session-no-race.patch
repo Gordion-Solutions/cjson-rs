@@ -1,0 +1,24 @@
+diff --git a/test/broker/15-persist-client-expired-session.py b/test/broker/15-persist-client-expired-session.py
+index c8826e0..5cb4987 100755
+--- a/test/broker/15-persist-client-expired-session.py
++++ b/test/broker/15-persist-client-expired-session.py
+@@ -126,6 +126,9 @@ def do_test(
+         # Send ping and wait for the PINGRESP to make sure the broker will not send a queued message instead
+         mosq_test.do_ping(subscriber_sock)
+         subscriber_sock.close()
++        # Give the broker time to process the disconnect (and persist the
++        # client row) before it is terminated.
++        time.sleep(0.5)
+ 
+         (broker_terminate_rc, stde) = mosq_test.terminate_broker(broker)
+         broker = None
+@@ -167,6 +170,9 @@ def do_test(
+             # Send ping and wait for the PINGRESP to make sure the broker will not send a queued message instead
+             mosq_test.do_ping(subscriber_sock)
+             subscriber_sock.close()
++            # Give the broker time to process the disconnect (and persist the
++            # client row) before it is terminated.
++            time.sleep(0.5)
+ 
+             (broker_terminate_rc, stde) = mosq_test.terminate_broker(broker)
+             broker = None

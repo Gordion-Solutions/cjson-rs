@@ -1,0 +1,20 @@
+diff --git a/test/client/02-subscribe-format.py b/test/client/02-subscribe-format.py
+index 9b3884c..55c6211 100755
+--- a/test/client/02-subscribe-format.py
++++ b/test/client/02-subscribe-format.py
+@@ -53,8 +53,13 @@ def do_test(format_str, expected_output, proto_ver=4, payload="message"):
+         sock = mosq_test.pub_helper(port=port, proto_ver=proto_ver)
+ 
+         sub = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+-        time.sleep(0.1)
+-        sock.send(publish_packet)
++        # Republish until the subscriber has received one message and exited
++        # (-C 1). A single publish after a fixed sleep is lost if the
++        # subscriber has not subscribed yet.
++        deadline = time.time() + 10
++        while sub.poll() is None and time.time() < deadline:
++            sock.send(publish_packet)
++            time.sleep(0.05)
+         sub_terminate_rc = 0
+         if mosq_test.wait_for_subprocess(sub):
+             print("sub not terminated")
