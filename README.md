@@ -105,11 +105,20 @@ The cdylib output is `libcjson.{so,dylib}` — drop-in named.
 | Tokeniser (RFC 8259, internal) | 34 | green |
 | Parser (RFC 8259, internal) | 41 | green |
 | Serialiser (RFC 8259, internal) | 37 | green |
-| FFI smoke (`unsafe` Rust → FFI) | 34 | green |
+| FFI smoke (`unsafe` Rust → FFI) | 52 | green |
+| cJSON_Utils FFI (pointer / patch / merge) | 12 | green |
 | C smoke (real `cc -lcjson`) | 11 | green |
-| **Upstream cJSON, public-API subset** | **65 / 65** | **100%** |
-| Miri (UB detection on FFI) | 34 | clean |
+| **Upstream cJSON, public-API subset** | **74 / 74** | **100%** |
+| Miri (UB detection on FFI, incl. merge-patch alias) | — | clean |
 | Fuzz (libfuzzer + ASan, 2 targets, ~4.5M runs — baseline) | — | no crashes |
+
+The public-API subset now includes cJSON's own `cJSON_Utils` tests: `misc_utils_tests`, `old_utils_tests`, `json_patch_tests` (with the upstream `json-patch-tests` corpus — `tests.json`, `spec_tests.json`, `cjson-utils-tests.json`) and `compare_tests`.
+
+### cJSON_Utils and CVE-2026-87933
+
+cjson-rs implements all 14 `cJSONUtils_*` functions — JSON Pointer (RFC 6901), JSON Patch (RFC 6902) and JSON Merge Patch (RFC 7386) — from the specifications, as a consumer of the public cJSON API.
+
+**cjson-rs is not affected by CVE-2026-87933**, the use-after-free in `cJSONUtils_MergePatch` present in upstream cJSON through 1.7.19. Upstream frees the target and then duplicates the patch; when the patch aliases a node inside the target, the duplicate reads freed memory. cjson-rs duplicates the patch before freeing the target, so the read cannot touch freed memory. This is verified both ways: the CVE reproduces against upstream cJSON 1.7.19 under AddressSanitizer, and the identical input is clean in cjson-rs under Miri (`cjson-rs-ffi/tests/utils_smoke.rs::merge_patch_patch_aliases_target_is_safe`).
 
 ### Known limitations
 

@@ -8,7 +8,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
-- Drop-in packaging. The shared library now carries cJSON's own names (`libcjson.so.1`, `libcjson.1.dylib`) and exports only the 78 `cJSON_*` symbols (`cjson-rs-ffi/build.rs`, `cjson.map`, `exported_symbols.txt`).
+- `cJSON_Utils`: JSON Pointer (RFC 6901), JSON Patch (RFC 6902) and JSON Merge Patch (RFC 7386). All 14 `cJSONUtils_*` functions are implemented as consumers of the public cJSON API, from the RFCs, and pass cJSON's own utils test files (`misc_utils_tests`, `old_utils_tests`, `json_patch_tests` — including the upstream `json-patch-tests` corpus — and `compare_tests`). The header `cJSON_Utils.h` ships in the install and the symbols are exported from the drop-in library.
+- **Not affected by CVE-2026-87933.** The use-after-free in upstream `cJSONUtils_MergePatch` (free target, then duplicate an aliased patch) cannot occur here: cjson-rs duplicates the patch before freeing the target. Verified both ways — the CVE reproduces against upstream cJSON 1.7.19 under AddressSanitizer, and the same input is clean in cjson-rs under Miri (`cjson-rs-ffi/tests/utils_smoke.rs::merge_patch_patch_aliases_target_is_safe`).
+- Drop-in packaging. The shared library now carries cJSON's own names (`libcjson.so.1`, `libcjson.1.dylib`) and exports the `cJSON_*` and `cJSONUtils_*` symbols (`cjson-rs-ffi/build.rs`, `cjson.map`, `exported_symbols.txt`).
+
+### Fixed
+
+- `cJSON_ReplaceItemInObject` / `cJSON_ReplaceItemInObjectCaseSensitive` now set the replacement's key to the passed name, matching cJSON. Previously the replacement kept whatever key it already carried (e.g. a node from `cJSON_Duplicate`), so replacing a member with such a node could change the member's name. Surfaced by RFC 6902 `add` replacing an existing member.
 - `cjson-rs-ffi/tools/install.sh <prefix>` installs the library, upstream's `cJSON.h` (unchanged, v1.7.19) as `include/cjson/cJSON.h`, `libcjson.pc` for pkg-config and `cJSON::cjson` CMake package files, in cJSON's own layout. `tools/stage.sh <dir>` copies the build under the real file names without installing.
 - `cjson-rs-ffi/tests/c/run-install-test.sh` builds a C program against a scratch install through pkg-config and CMake and checks it loaded the installed library. Runs in CI on Linux and macOS.
 
