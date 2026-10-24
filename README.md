@@ -2,6 +2,8 @@
 
 A memory-safe Rust JSON parser with a drop-in C ABI for [cJSON](https://github.com/DaveGamble/cJSON).
 
+Project page: <https://gordionsolutions.co.uk/software/#cjson-safe>
+
 > **Status:** functional. 100% pass rate on the public-API subset of upstream cJSON's test suite. 78/78 cJSON.h functions implemented. Miri-clean on the unsafe FFI shim. Fuzzed (libfuzzer + AddressSanitizer) at ~4.5M iterations across two targets with no crashes — a baseline; extended multi-day runs are planned as part of the funded work.
 
 ## Quick example

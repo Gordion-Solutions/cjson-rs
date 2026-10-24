@@ -11,4 +11,5 @@ edition = "2021"
 rust-version = "1.94"
 license = "MIT"
 repository = "https://github.com/Gordion-Solutions/cjson-rs"
+homepage = "https://gordionsolutions.co.uk/software/#cjson-safe"
 authors = ["Thomas Jenkinson"]
