@@ -124,11 +124,16 @@ cjson-rs implements all 14 `cJSONUtils_*` functions — JSON Pointer (RFC 6901),
 
 **cjson-rs is not affected by CVE-2026-87933**, the use-after-free in `cJSONUtils_MergePatch` present in upstream cJSON through 1.7.19. Upstream frees the target and then duplicates the patch; when the patch aliases a node inside the target, the duplicate reads freed memory. cjson-rs duplicates the patch before freeing the target, so the read cannot touch freed memory. This is verified both ways: the CVE reproduces against upstream cJSON 1.7.19 under AddressSanitizer, and the identical input is clean in cjson-rs under Miri (`cjson-rs-ffi/tests/utils_smoke.rs::merge_patch_patch_aliases_target_is_safe`).
 
+### Number formatting
+
+cjson-safe prints numbers using Rust's shortest round-trip formatting — the shortest decimal string that parses back to the exact same `f64`. Upstream cJSON prints via `%1.15g` (falling back to `%1.17g`), which is *lossy*: `0.30000000000000004` becomes `0.3`. Both are valid JSON, and on ordinary data the printed output is byte-identical; the two differ only on some values — very large or very small numbers, negative zero (`0` vs `-0`), and doubles that cJSON rounds. We keep the exact (lossless) form deliberately: it never changes a value. A consumer that needs byte-identical output to upstream (e.g. golden-file comparisons) should be aware of this; an opt-in upstream-compatible number mode can be added if needed. See `bench/README.md` for the specific cases.
+
 ### Known limitations
 
 | Item | Why | Fix |
 |---|---|---|
 | Upstream tests that `#include "../cJSON.c"` directly (using internal `global_hooks` symbol) are not in the runner | These are white-box tests of cJSON's internals, not real drop-in compat tests. | Out of scope for drop-in validation |
+| Parse is slower than cJSON | The FFI parse path builds an intermediate Rust tree before the cJSON tree. | Being optimised (parse straight into cJSON nodes). |
 
 ## Install
 
