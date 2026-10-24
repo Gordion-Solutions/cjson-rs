@@ -10,6 +10,11 @@ use crate::token::{PositionedToken, Token};
 use crate::tokeniser::Tokeniser;
 use crate::value::Value;
 
+// The parser streams tokens straight from the tokeniser with a single-token
+// lookahead, rather than materialising the whole token stream into a `Vec`.
+// For a large document that removes a full-size intermediate allocation (and
+// its reallocations) on the parse hot path.
+
 /// Parser configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParserOptions {
@@ -33,20 +38,16 @@ pub fn parse(input: &[u8]) -> Result<Value, Error> {
 
 /// Parse a complete JSON document with caller-supplied options.
 pub fn parse_with_options(input: &[u8], opts: &ParserOptions) -> Result<Value, Error> {
-      let tokens = Tokeniser::tokenise(input)?;
-      let mut parser = Parser {
-          tokens,
-          cursor: 0,
-          depth: 0,
-          limit: opts.nesting_limit,
-      };
-      let value = parser.parse_value()?;
-      if parser.cursor < parser.tokens.len() {
-          return Err(Error::TrailingData {
-              pos: parser.tokens[parser.cursor].pos,
-          });
-      }
-      Ok(value)
+    let mut parser = Parser::new(input, opts.nesting_limit);
+    let value = parser.parse_value()?;
+    // Require the whole input to be a single value: anything after it (a
+    // further token, or trailing bytes that don't even tokenise) is an error.
+    match parser.peek()? {
+        None => Ok(value),
+        Some(_) => Err(Error::TrailingData {
+            pos: parser.peek_pos(),
+        }),
+    }
 }
 
 /// Parse a single JSON value from the prefix of `input` and return both the
@@ -57,42 +58,74 @@ pub fn parse_with_options(input: &[u8], opts: &ParserOptions) -> Result<Value, E
 /// Backs cJSON's `cJSON_ParseWithOpts(..., require_null_terminated = false)`
 /// — see `cjson-rs-ffi/src/lib.rs::cJSON_ParseWithOpts`.
 pub fn parse_prefix(input: &[u8]) -> Result<(Value, usize), Error> {
-    let (tokens, _) = Tokeniser::tokenise_prefix(input);
-    let mut parser = Parser {
-        tokens,
-        cursor: 0,
-        depth: 0,
-        limit: ParserOptions::default().nesting_limit,
-    };
+    let mut parser = Parser::new(input, ParserOptions::default().nesting_limit);
     let value = parser.parse_value()?;
-    // parse_value consumed at least one token, so cursor >= 1 and the
-    // expression below is safe.
-    let parse_end = parser.tokens[parser.cursor - 1].end.offset;
-    Ok((value, parse_end))
+    // Stop at the end of the first value; trailing bytes (valid or not) are
+    // ignored, matching cJSON's require_null_terminated = false mode.
+    Ok((value, parser.last_end.offset))
 }
 
-struct Parser {
-    tokens: Vec<PositionedToken>,
-    cursor: usize,
+struct Parser<'a> {
+    tok: Tokeniser<'a>,
+    /// One-token lookahead, lexed on demand. `None` means "not yet filled".
+    peeked: Option<PositionedToken>,
+    /// Set once the tokeniser has reported end of input.
+    at_end: bool,
+    /// Position and end of the most recently consumed token — used for EOF
+    /// error reporting and for `parse_prefix`'s end offset.
+    last_pos: Position,
+    last_end: Position,
     depth: usize,
     limit: usize,
 }
 
-impl Parser {
-    fn peek(&self) -> Option<&Token> {
-        self.tokens.get(self.cursor).map(|pt| &pt.token)
+impl<'a> Parser<'a> {
+    fn new(input: &'a [u8], limit: usize) -> Self {
+        Parser {
+            tok: Tokeniser::new(input),
+            peeked: None,
+            at_end: false,
+            last_pos: Position::START,
+            last_end: Position::START,
+            depth: 0,
+            limit,
+        }
     }
 
-    fn peek_pos(&self) -> Position {
-        self.tokens
-            .get(self.cursor)
+    /// Ensure the lookahead slot is filled (or end-of-input reached).
+    /// Surfaces a tokenise error at the point the bad token is read.
+    fn fill(&mut self) -> Result<(), Error> {
+        if self.peeked.is_none() && !self.at_end {
+            match self.tok.next_positioned() {
+                None => self.at_end = true,
+                Some(Ok(t)) => self.peeked = Some(t),
+                Some(Err(e)) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+
+    fn peek(&mut self) -> Result<Option<&Token>, Error> {
+        self.fill()?;
+        Ok(self.peeked.as_ref().map(|pt| &pt.token))
+    }
+
+    /// Position to blame in an error message: the lookahead token's start if
+    /// there is one, otherwise just past the last consumed token. Never
+    /// propagates a tokenise error (it's only building a diagnostic).
+    fn peek_pos(&mut self) -> Position {
+        let _ = self.fill();
+        self.peeked
+            .as_ref()
             .map(|pt| pt.pos)
-            .or_else(|| self.tokens.last().map(|pt| pt.pos))
-            .unwrap_or(Position::START)
+            .unwrap_or(self.last_pos)
     }
 
     fn advance(&mut self) {
-        self.cursor += 1;
+        if let Some(pt) = self.peeked.take() {
+            self.last_pos = pt.pos;
+            self.last_end = pt.end;
+        }
     }
 
     fn enter(&mut self, pos: Position) -> Result<(), Error> {
@@ -110,7 +143,7 @@ impl Parser {
     /// RFC 8259 §3: value = false / null / true / object / array / number / string
     fn parse_value(&mut self) -> Result<Value, Error> {
         let pos = self.peek_pos();
-        let tok = self.peek().ok_or(Error::UnexpectedEof { pos })?;
+        let tok = self.peek()?.ok_or(Error::UnexpectedEof { pos })?;
         match tok {
             Token::Null => {
                 self.advance();
@@ -148,7 +181,7 @@ impl Parser {
 
         let mut items = Vec::new();
 
-        if matches!(self.peek(), Some(Token::EndArray)) {
+        if matches!(self.peek()?, Some(Token::EndArray)) {
             self.advance();
             self.leave();
             return Ok(Value::Array(items));
@@ -156,12 +189,12 @@ impl Parser {
 
         loop {
             items.push(self.parse_value()?);
-            match self.peek() {
+            match self.peek()? {
                 Some(Token::ValueSeparator) => {
                     let comma_pos = self.peek_pos();
                     self.advance();
                     // Reject trailing comma: next token must start a value, not close.
-                    if matches!(self.peek(), Some(Token::EndArray)) {
+                    if matches!(self.peek()?, Some(Token::EndArray)) {
                         return Err(Error::UnexpectedToken { pos: comma_pos });
                     }
                 }
@@ -193,7 +226,7 @@ impl Parser {
 
         let mut members = Vec::new();
 
-        if matches!(self.peek(), Some(Token::EndObject)) {
+        if matches!(self.peek()?, Some(Token::EndObject)) {
             self.advance();
             self.leave();
             return Ok(Value::Object(members));
@@ -202,7 +235,7 @@ impl Parser {
         loop {
             // Expect string key.
             let key_pos = self.peek_pos();
-            let key = match self.peek() {
+            let key = match self.peek()? {
                 Some(Token::String(s)) => {
                     let s = s.clone();
                     self.advance();
@@ -213,7 +246,7 @@ impl Parser {
             };
 
             // Expect name-separator (:).
-            match self.peek() {
+            match self.peek()? {
                 Some(Token::NameSeparator) => self.advance(),
                 Some(_) => {
                     return Err(Error::UnexpectedToken {
@@ -232,11 +265,11 @@ impl Parser {
             members.push((key, value));
 
             // Expect value-separator (,) or end-object (}).
-            match self.peek() {
+            match self.peek()? {
                 Some(Token::ValueSeparator) => {
                     let comma_pos = self.peek_pos();
                     self.advance();
-                    if matches!(self.peek(), Some(Token::EndObject)) {
+                    if matches!(self.peek()?, Some(Token::EndObject)) {
                         return Err(Error::UnexpectedToken { pos: comma_pos });
                     }
                 }

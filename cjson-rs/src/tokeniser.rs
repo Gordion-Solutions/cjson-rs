@@ -60,6 +60,23 @@ impl<'a> Tokeniser<'a> {
         (out, last_token_end)
     }
     
+    /// Pull the next token, skipping leading whitespace. Returns `None` once
+    /// only trailing whitespace (or nothing) remains. Lets a caller stream
+    /// tokens without materialising them all into a `Vec` — used by the
+    /// parser so a large document is never doubly allocated.
+    pub fn next_positioned(&mut self) -> Option<Result<PositionedToken, Error>> {
+        self.skip_ws();
+        if self.is_at_end() {
+            return None;
+        }
+        Some(self.next_token())
+    }
+
+    /// Byte offset of the read cursor (end of the last token consumed).
+    pub fn offset(&self) -> usize {
+        self.pos.offset
+    }
+
     fn is_at_end(&self) -> bool {
         self.pos.offset >= self.input.len()
     }
