@@ -1494,10 +1494,29 @@ unsafe fn replace_object_item(
     newitem: *mut cJSON,
     case_sensitive: bool,
 ) -> cJSON_bool {
+    if object.is_null() || string.is_null() || newitem.is_null() {
+        return CJSON_BOOL_FALSE;
+    }
     let item = get_object_item_impl(object, string, case_sensitive);
     if item.is_null() {
         return CJSON_BOOL_FALSE;
     }
+    // cJSON's contract: the replacement takes `string` as its key, whatever
+    // key it carried before (e.g. a node from cJSON_Duplicate keeps the key
+    // it was copied from). Free any existing non-const key and set the new
+    // one so the member name is `string`, not the replacement's old name.
+    if ((*newitem).type_ & CJSON_STRING_IS_CONST) == 0 && !(*newitem).string.is_null() {
+        crate::alloc_hooks::hook_free((*newitem).string as *mut libc::c_void);
+    }
+    (*newitem).type_ &= !CJSON_STRING_IS_CONST;
+    (*newitem).string = {
+        let with_nul = CStr::from_ptr(string).to_bytes_with_nul();
+        let buf = crate::alloc_hooks::hook_malloc(with_nul.len()) as *mut c_char;
+        if !buf.is_null() {
+            ptr::copy_nonoverlapping(with_nul.as_ptr() as *const c_char, buf, with_nul.len());
+        }
+        buf
+    };
     replace_via_pointer(object, item, newitem)
 }
 

@@ -154,3 +154,48 @@ fn merge_patch_null_patch_deletes_target() {
         let _ = ptr::null::<u8>();
     }
 }
+
+/// Regression test: `add` to an existing object member must keep the member
+/// key, not the key the value node was duplicated from. This exercises the
+/// cJSON_ReplaceItemInObject key-assignment fix in lib.rs.
+#[test]
+fn add_replaces_existing_field_keeps_key() {
+    unsafe {
+        let doc = parse(r#"{"foo":null}"#);
+        let patch = parse(r#"[{"op":"add","path":"/foo","value":1}]"#);
+        let rc = cJSONUtils_ApplyPatchesCaseSensitive(doc, patch);
+        assert_eq!(rc, 0);
+        assert_eq!(unformatted(doc), r#"{"foo":1}"#);
+        cJSON_Delete(doc);
+        cJSON_Delete(patch);
+    }
+}
+
+/// A move whose source is a parent of its destination must be rejected
+/// (RFC 6902 §4.4), and the document left usable.
+#[test]
+fn move_into_own_child_is_rejected() {
+    unsafe {
+        let doc = parse(r#"{"a":{"b":1}}"#);
+        let patch = parse(r#"[{"op":"move","from":"/a","path":"/a/c"}]"#);
+        let rc = cJSONUtils_ApplyPatchesCaseSensitive(doc, patch);
+        assert_ne!(rc, 0);
+        cJSON_Delete(doc);
+        cJSON_Delete(patch);
+    }
+}
+
+/// test op: equal passes (0), unequal fails (non-zero).
+#[test]
+fn test_op_compares_value() {
+    unsafe {
+        let doc = parse(r#"{"a":[1,2,3]}"#);
+        let pass = parse(r#"[{"op":"test","path":"/a/1","value":2}]"#);
+        let fail = parse(r#"[{"op":"test","path":"/a/1","value":9}]"#);
+        assert_eq!(cJSONUtils_ApplyPatchesCaseSensitive(doc, pass), 0);
+        assert_ne!(cJSONUtils_ApplyPatchesCaseSensitive(doc, fail), 0);
+        cJSON_Delete(doc);
+        cJSON_Delete(pass);
+        cJSON_Delete(fail);
+    }
+}

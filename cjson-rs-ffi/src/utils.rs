@@ -11,21 +11,25 @@
 //! NULL, matching cJSON's "return NULL / return non-zero on failure"
 //! convention.
 
+use crate::alloc_hooks;
 use crate::convert::alloc_cstr;
 use crate::panic_guard::guard;
-use crate::types::cJSON;
+use crate::types::{cJSON, CJSON_ARRAY, CJSON_OBJECT};
 use crate::cJSON_bool;
 use std::cmp::Ordering;
-use std::ffi::{c_char, c_int, CStr};
+use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::ptr;
 
 // The building blocks, all exported from lib.rs.
 use crate::{
-    cJSON_AddItemToObject, cJSON_Compare, cJSON_CreateNull, cJSON_CreateObject,
-    cJSON_Delete, cJSON_DeleteItemFromObject,
-    cJSON_DeleteItemFromObjectCaseSensitive, cJSON_DetachItemFromObject,
+    cJSON_AddItemToArray, cJSON_AddItemToObject, cJSON_Compare, cJSON_CreateArray,
+    cJSON_CreateNull, cJSON_CreateObject, cJSON_CreateString, cJSON_Delete, cJSON_DeleteItemFromArray,
+    cJSON_DeleteItemFromObject, cJSON_DeleteItemFromObjectCaseSensitive,
+    cJSON_DetachItemFromArray, cJSON_DetachItemFromObject,
     cJSON_DetachItemFromObjectCaseSensitive, cJSON_Duplicate, cJSON_GetArrayItem,
-    cJSON_GetArraySize, cJSON_IsArray, cJSON_IsNull, cJSON_IsObject,
+    cJSON_GetArraySize, cJSON_InsertItemInArray, cJSON_IsArray, cJSON_IsNull,
+    cJSON_IsObject, cJSON_IsString,
+    cJSON_ReplaceItemInObject, cJSON_ReplaceItemInObjectCaseSensitive,
 };
 
 const TRUE: cJSON_bool = 1;
@@ -114,6 +118,15 @@ unsafe fn get_pointer(object: *mut cJSON, pointer: *const c_char, case_sensitive
         return ptr::null_mut();
     }
     let bytes = CStr::from_ptr(pointer).to_bytes();
+    get_pointer_bytes(object, bytes, case_sensitive)
+}
+
+/// As `get_pointer`, but over a byte slice (no trailing NUL needed). Used by
+/// the patch engine, which slices paths apart.
+unsafe fn get_pointer_bytes(object: *mut cJSON, bytes: &[u8], case_sensitive: bool) -> *mut cJSON {
+    if object.is_null() {
+        return ptr::null_mut();
+    }
     let mut cur = object;
     let mut i = 0;
 
@@ -355,6 +368,431 @@ unsafe fn generate_merge_patch(from: *const cJSON, to: *const cJSON, case_sensit
     patch
 }
 
+// ---- JSON Patch (RFC 6902) --------------------------------------------------
+
+/// Replace the *contents* of `dst` with those of `src`, in place, keeping
+/// `dst`'s own node identity and list linkage. Used for operations whose
+/// path is "" (the whole document). `src` is consumed.
+unsafe fn overwrite_in_place(dst: *mut cJSON, src: *mut cJSON) {
+    let old_child = (*dst).child;
+    let old_valuestring = (*dst).valuestring;
+
+    (*dst).type_ = (*src).type_;
+    (*dst).valuestring = (*src).valuestring;
+    (*dst).valueint = (*src).valueint;
+    (*dst).valuedouble = (*src).valuedouble;
+    (*dst).child = (*src).child;
+
+    if !old_child.is_null() {
+        cJSON_Delete(old_child);
+    }
+    if !old_valuestring.is_null() {
+        alloc_hooks::hook_free(old_valuestring as *mut c_void);
+    }
+
+    // Free only the `src` shell (and its key), not the guts we moved out.
+    (*src).child = ptr::null_mut();
+    (*src).valuestring = ptr::null_mut();
+    cJSON_Delete(src);
+}
+
+/// Split a non-empty pointer path into (parent-path, decoded-last-token).
+/// Returns None if the path does not start with '/'.
+fn split_last(path: &[u8]) -> Option<(&[u8], Vec<u8>)> {
+    if path.is_empty() || path[0] != b'/' {
+        return None;
+    }
+    let last = path.iter().rposition(|&b| b == b'/').unwrap();
+    Some((&path[..last], decode_token(&path[last + 1..])))
+}
+
+/// Byte slice of a string-typed object member, if present.
+unsafe fn member_string<'a>(object: *const cJSON, key: &[u8], case_sensitive: bool) -> Option<&'a [u8]> {
+    let m = object_child_by_key(object, key, case_sensitive);
+    if m.is_null() || cJSON_IsString(m) != TRUE || (*m).valuestring.is_null() {
+        return None;
+    }
+    Some(CStr::from_ptr((*m).valuestring).to_bytes())
+}
+
+/// Place an owned `item` at `path` within `root` (the shared add/replace-at
+/// logic for add/move/copy). On any failure, `item` is deleted and false is
+/// returned. `replace_existing` chooses add-vs-replace semantics for objects
+/// and arrays.
+unsafe fn place_item(root: *mut cJSON, path: &[u8], item: *mut cJSON, case_sensitive: bool) -> bool {
+    if path.is_empty() {
+        overwrite_in_place(root, item);
+        return true;
+    }
+    let (parent_path, token) = match split_last(path) {
+        Some(v) => v,
+        None => {
+            cJSON_Delete(item);
+            return false;
+        }
+    };
+    let parent = get_pointer_bytes(root, parent_path, case_sensitive);
+    if parent.is_null() {
+        cJSON_Delete(item);
+        return false;
+    }
+
+    if cJSON_IsArray(parent) == TRUE {
+        let size = cJSON_GetArraySize(parent);
+        if token == b"-" {
+            cJSON_AddItemToArray(parent, item);
+            return true;
+        }
+        match parse_array_index(&token) {
+            Some(idx) if idx >= 0 && idx <= size => {
+                if idx == size {
+                    cJSON_AddItemToArray(parent, item);
+                } else {
+                    cJSON_InsertItemInArray(parent, idx, item);
+                }
+                true
+            }
+            _ => {
+                cJSON_Delete(item);
+                false
+            }
+        }
+    } else if cJSON_IsObject(parent) == TRUE {
+        let key = match CString::new(token) {
+            Ok(k) => k,
+            Err(_) => {
+                cJSON_Delete(item);
+                return false;
+            }
+        };
+        let exists = !object_child_by_key(parent, key.to_bytes(), case_sensitive).is_null();
+        if exists {
+            if case_sensitive {
+                cJSON_ReplaceItemInObjectCaseSensitive(parent, key.as_ptr(), item);
+            } else {
+                cJSON_ReplaceItemInObject(parent, key.as_ptr(), item);
+            }
+        } else {
+            cJSON_AddItemToObject(parent, key.as_ptr(), item);
+        }
+        true
+    } else {
+        cJSON_Delete(item);
+        false
+    }
+}
+
+/// Remove whatever `path` points to within `root`. False on any failure
+/// (missing parent, missing target, bad index).
+unsafe fn remove_at(root: *mut cJSON, path: &[u8], case_sensitive: bool) -> bool {
+    let (parent_path, token) = match split_last(path) {
+        Some(v) => v,
+        None => return false,
+    };
+    let parent = get_pointer_bytes(root, parent_path, case_sensitive);
+    if parent.is_null() {
+        return false;
+    }
+    if cJSON_IsArray(parent) == TRUE {
+        match parse_array_index(&token) {
+            Some(idx) if idx >= 0 && idx < cJSON_GetArraySize(parent) => {
+                cJSON_DeleteItemFromArray(parent, idx);
+                true
+            }
+            _ => false,
+        }
+    } else if cJSON_IsObject(parent) == TRUE {
+        let key = match CString::new(token) {
+            Ok(k) => k,
+            Err(_) => return false,
+        };
+        if object_child_by_key(parent, key.to_bytes(), case_sensitive).is_null() {
+            return false;
+        }
+        if case_sensitive {
+            cJSON_DeleteItemFromObjectCaseSensitive(parent, key.as_ptr());
+        } else {
+            cJSON_DeleteItemFromObject(parent, key.as_ptr());
+        }
+        true
+    } else {
+        false
+    }
+}
+
+/// Detach (and return ownership of) whatever `path` points to. Null on any
+/// failure. Used by `move`.
+unsafe fn detach_at(root: *mut cJSON, path: &[u8], case_sensitive: bool) -> *mut cJSON {
+    let (parent_path, token) = match split_last(path) {
+        Some(v) => v,
+        None => return ptr::null_mut(),
+    };
+    let parent = get_pointer_bytes(root, parent_path, case_sensitive);
+    if parent.is_null() {
+        return ptr::null_mut();
+    }
+    if cJSON_IsArray(parent) == TRUE {
+        match parse_array_index(&token) {
+            Some(idx) if idx >= 0 && idx < cJSON_GetArraySize(parent) => {
+                cJSON_DetachItemFromArray(parent, idx)
+            }
+            _ => ptr::null_mut(),
+        }
+    } else if cJSON_IsObject(parent) == TRUE {
+        let key = match CString::new(token) {
+            Ok(k) => k,
+            Err(_) => return ptr::null_mut(),
+        };
+        if case_sensitive {
+            cJSON_DetachItemFromObjectCaseSensitive(parent, key.as_ptr())
+        } else {
+            cJSON_DetachItemFromObject(parent, key.as_ptr())
+        }
+    } else {
+        ptr::null_mut()
+    }
+}
+
+/// True when `prefix` is `path` or a parent of it (at a token boundary).
+fn is_pointer_prefix(prefix: &[u8], path: &[u8]) -> bool {
+    if prefix.is_empty() {
+        return true;
+    }
+    path.len() >= prefix.len()
+        && &path[..prefix.len()] == prefix
+        && (path.len() == prefix.len() || path[prefix.len()] == b'/')
+}
+
+/// Apply one patch operation to `root`. Returns true on success.
+unsafe fn apply_one(root: *mut cJSON, op_obj: *const cJSON, case_sensitive: bool) -> bool {
+    if cJSON_IsObject(op_obj) != TRUE {
+        return false;
+    }
+    let op = match member_string(op_obj, b"op", case_sensitive) {
+        Some(o) => o,
+        None => return false,
+    };
+    let path = match member_string(op_obj, b"path", case_sensitive) {
+        Some(p) => p,
+        None => return false,
+    };
+
+    match op {
+        b"add" => {
+            let value = object_child_by_key(op_obj, b"value", case_sensitive);
+            if value.is_null() {
+                return false;
+            }
+            let dup = cJSON_Duplicate(value, TRUE);
+            if dup.is_null() {
+                return false;
+            }
+            place_item(root, path, dup, case_sensitive)
+        }
+        b"remove" => {
+            if path.is_empty() {
+                return false;
+            }
+            remove_at(root, path, case_sensitive)
+        }
+        b"replace" => {
+            let value = object_child_by_key(op_obj, b"value", case_sensitive);
+            if value.is_null() {
+                return false;
+            }
+            // Target must already exist.
+            if get_pointer_bytes(root, path, case_sensitive).is_null() && !path.is_empty() {
+                return false;
+            }
+            let dup = cJSON_Duplicate(value, TRUE);
+            if dup.is_null() {
+                return false;
+            }
+            if path.is_empty() {
+                overwrite_in_place(root, dup);
+                return true;
+            }
+            // remove-then-add keeps object-key order close to upstream and
+            // handles arrays uniformly.
+            if !remove_at(root, path, case_sensitive) {
+                cJSON_Delete(dup);
+                return false;
+            }
+            place_item(root, path, dup, case_sensitive)
+        }
+        b"move" => {
+            let from = match member_string(op_obj, b"from", case_sensitive) {
+                Some(f) => f,
+                None => return false,
+            };
+            if from.is_empty() {
+                return false;
+            }
+            // RFC 6902: 'from' MUST NOT be a proper prefix of 'path'.
+            if from != path && is_pointer_prefix(from, path) {
+                return false;
+            }
+            if get_pointer_bytes(root, from, case_sensitive).is_null() {
+                return false;
+            }
+            let detached = detach_at(root, from, case_sensitive);
+            if detached.is_null() {
+                return false;
+            }
+            place_item(root, path, detached, case_sensitive)
+        }
+        b"copy" => {
+            let from = match member_string(op_obj, b"from", case_sensitive) {
+                Some(f) => f,
+                None => return false,
+            };
+            let src = get_pointer_bytes(root, from, case_sensitive);
+            if src.is_null() {
+                return false;
+            }
+            let dup = cJSON_Duplicate(src, TRUE);
+            if dup.is_null() {
+                return false;
+            }
+            place_item(root, path, dup, case_sensitive)
+        }
+        b"test" => {
+            let value = object_child_by_key(op_obj, b"value", case_sensitive);
+            if value.is_null() {
+                return false;
+            }
+            let target = get_pointer_bytes(root, path, case_sensitive);
+            if target.is_null() {
+                return false;
+            }
+            cJSON_Compare(target, value, case_sensitive as cJSON_bool) == TRUE
+        }
+        _ => false,
+    }
+}
+
+/// Apply a patch array to `object` in place. Returns 0 on success, non-zero
+/// on the first failing operation (non-atomic, like cJSON).
+unsafe fn apply_patches(object: *mut cJSON, patches: *const cJSON, case_sensitive: bool) -> c_int {
+    if object.is_null() || patches.is_null() || cJSON_IsArray(patches) != TRUE {
+        return 1;
+    }
+    let mut op = (*patches).child;
+    while !op.is_null() {
+        if !apply_one(object, op, case_sensitive) {
+            return 1;
+        }
+        op = (*op).next;
+    }
+    0
+}
+
+// ---- Generate patches (RFC 6902) --------------------------------------------
+
+/// Append `{op, path[, value]}` to `patches`.
+unsafe fn add_patch(patches: *mut cJSON, op: &str, path: &[u8], value: *const cJSON) {
+    let obj = cJSON_CreateObject();
+    if obj.is_null() {
+        return;
+    }
+    let opc = CString::new(op).unwrap();
+    cJSON_AddItemToObject(obj, b"op\0".as_ptr().cast(), cJSON_CreateString(opc.as_ptr()));
+    let pathc = CString::new(path).unwrap_or_default();
+    cJSON_AddItemToObject(obj, b"path\0".as_ptr().cast(), cJSON_CreateString(pathc.as_ptr()));
+    if !value.is_null() {
+        cJSON_AddItemToObject(obj, b"value\0".as_ptr().cast(), cJSON_Duplicate(value, TRUE));
+    }
+    cJSON_AddItemToArray(patches, obj);
+}
+
+fn index_path(path: &[u8], index: usize) -> Vec<u8> {
+    let mut p = path.to_vec();
+    p.push(b'/');
+    p.extend_from_slice(index.to_string().as_bytes());
+    p
+}
+
+fn key_path(path: &[u8], key: &[u8]) -> Vec<u8> {
+    let mut p = path.to_vec();
+    p.push(b'/');
+    p.extend_from_slice(&encode_token(key));
+    p
+}
+
+/// Emit into `patches` the operations that turn `from` into `to` at `path`.
+unsafe fn create_patches(patches: *mut cJSON, path: &[u8], from: *const cJSON, to: *const cJSON, cs: bool) {
+    if cJSON_Compare(from, to, cs as cJSON_bool) == TRUE {
+        return;
+    }
+    let tf = (*from).type_ & 0xFF;
+    let tt = (*to).type_ & 0xFF;
+    if tf != tt {
+        add_patch(patches, "replace", path, to);
+        return;
+    }
+
+    if tf == CJSON_ARRAY {
+        let mut index: usize = 0;
+        let mut fc = (*from).child;
+        let mut tc = (*to).child;
+        while !fc.is_null() && !tc.is_null() {
+            create_patches(patches, &index_path(path, index), fc, tc, cs);
+            index += 1;
+            fc = (*fc).next;
+            tc = (*tc).next;
+        }
+        // Surplus in `from`: remove at the same index repeatedly (each
+        // removal shifts the tail down).
+        while !fc.is_null() {
+            add_patch(patches, "remove", &index_path(path, index), ptr::null());
+            fc = (*fc).next;
+        }
+        // Surplus in `to`: append in order.
+        while !tc.is_null() {
+            add_patch(patches, "add", &index_path(path, index), tc);
+            index += 1;
+            tc = (*tc).next;
+        }
+    } else if tf == CJSON_OBJECT {
+        // Removals: keys in `from` absent from `to`.
+        let mut fc = (*from).child;
+        while !fc.is_null() {
+            let key = key_bytes(fc);
+            if object_child_by_key(to, key, cs).is_null() {
+                add_patch(patches, "remove", &key_path(path, key), ptr::null());
+            }
+            fc = (*fc).next;
+        }
+        // Additions and recursive changes for keys in `to`.
+        let mut tc = (*to).child;
+        while !tc.is_null() {
+            let key = key_bytes(tc);
+            let from_child = object_child_by_key(from, key, cs);
+            if from_child.is_null() {
+                add_patch(patches, "add", &key_path(path, key), tc);
+            } else {
+                create_patches(patches, &key_path(path, key), from_child, tc, cs);
+            }
+            tc = (*tc).next;
+        }
+    } else {
+        // Scalars that compared unequal.
+        add_patch(patches, "replace", path, to);
+    }
+}
+
+unsafe fn generate_patches(from: *const cJSON, to: *const cJSON, cs: bool) -> *mut cJSON {
+    if from.is_null() || to.is_null() {
+        return ptr::null_mut();
+    }
+    let patches = cJSON_CreateArray();
+    if patches.is_null() {
+        return ptr::null_mut();
+    }
+    create_patches(patches, b"", from, to, cs);
+    patches
+}
+
 // ---- Public C ABI -----------------------------------------------------------
 
 #[no_mangle]
@@ -425,4 +863,54 @@ pub unsafe extern "C" fn cJSONUtils_GenerateMergePatchCaseSensitive(
     to: *mut cJSON,
 ) -> *mut cJSON {
     guard(ptr::null_mut(), || generate_merge_patch(from, to, true))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cJSONUtils_ApplyPatches(object: *mut cJSON, patches: *const cJSON) -> c_int {
+    guard(1, || apply_patches(object, patches, false))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cJSONUtils_ApplyPatchesCaseSensitive(
+    object: *mut cJSON,
+    patches: *const cJSON,
+) -> c_int {
+    guard(1, || apply_patches(object, patches, true))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cJSONUtils_GeneratePatches(from: *mut cJSON, to: *mut cJSON) -> *mut cJSON {
+    guard(ptr::null_mut(), || generate_patches(from, to, false))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cJSONUtils_GeneratePatchesCaseSensitive(
+    from: *mut cJSON,
+    to: *mut cJSON,
+) -> *mut cJSON {
+    guard(ptr::null_mut(), || generate_patches(from, to, true))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn cJSONUtils_AddPatchToArray(
+    array: *mut cJSON,
+    operation: *const c_char,
+    path: *const c_char,
+    value: *const cJSON,
+) {
+    guard((), || {
+        if array.is_null() || operation.is_null() || path.is_null() || cJSON_IsArray(array) != TRUE {
+            return;
+        }
+        let obj = cJSON_CreateObject();
+        if obj.is_null() {
+            return;
+        }
+        cJSON_AddItemToObject(obj, b"op\0".as_ptr().cast(), cJSON_CreateString(operation));
+        cJSON_AddItemToObject(obj, b"path\0".as_ptr().cast(), cJSON_CreateString(path));
+        if !value.is_null() {
+            cJSON_AddItemToObject(obj, b"value\0".as_ptr().cast(), cJSON_Duplicate(value, TRUE));
+        }
+        cJSON_AddItemToArray(array, obj);
+    })
 }
