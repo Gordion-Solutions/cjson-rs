@@ -1,0 +1,81 @@
+name: Release
+
+# Pushing a tag like v0.2.1 builds the library on each platform, tests the
+# archive as a user would use it, and attaches it to the GitHub release.
+# "Run workflow" (workflow_dispatch) builds and tests the same archives but
+# only keeps them as workflow artifacts, so the pipeline can be tried
+# without publishing anything.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux is built on 22.04 so the library needs an older glibc
+          # than ubuntu-latest's, and runs on more distributions.
+          - { os: ubuntu-22.04,     label: linux-x86_64 }
+          - { os: ubuntu-22.04-arm, label: linux-aarch64 }
+          - { os: macos-latest,     label: macos-arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install pkg-config (macOS)
+        if: runner.os == 'macOS'
+        run: brew install pkg-config
+      - name: Tag matches the crate version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          crate=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          test "v$crate" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != Cargo.toml version v$crate" >&2; exit 1; }
+      - name: Install test (build tree, pkg-config + CMake)
+        run: sh cjson-rs-ffi/tests/c/run-install-test.sh
+      - name: Build archive
+        run: sh cjson-rs-ffi/tools/package.sh dist ${{ matrix.label }}
+      - name: Test the archive as a user would
+        run: sh cjson-rs-ffi/tests/c/run-archive-test.sh dist/cjson-rs-*-${{ matrix.label }}.tar.gz
+      - name: Check soname and exported symbols (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          readelf -d target/release/libcjson.so | grep 'SONAME.*libcjson\.so\.1'
+          if nm -D --defined-only target/release/libcjson.so | grep -v ' [TD] cJSON_'; then
+            echo "unexpected exported symbols above" >&2; exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Attach to GitHub release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Combined checksums
+        run: cd dist && cat *.sha256 > SHA256SUMS && ls -l
+      - name: Create the release if needed, then upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber dist/*
