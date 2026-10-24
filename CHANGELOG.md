@@ -21,6 +21,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Changed
 
+- Prepared for crates.io. The C-ABI crate publishes as **`cjson-safe`** (builds the drop-in `libcjson`); the safe engine publishes as **`cjson-safe-core`** (unpromoted dependency). The repository stays `cjson-rs` and the import names are unchanged (`cjson` for the drop-in, `cjson_rs` for the core). The path dependency is now versioned so both are publishable (publish `cjson-safe-core` first, then `cjson-safe`). `authors` is now "Gordion Solutions"; licence stays MIT. Workspace version is `0.3.0`; `cJSON_Version()` returns `cjson-safe 0.3.0`. The `.pc`/CMake ABI version stays 1.7.19.
+- The README leads with the drop-in story and one honest line sending Rust users to `serde_json`.
 - The conformance and C smoke runners link the staged library, so they exercise the same file names a user gets.
 - MSRV lowered from 1.74 (was declared 1.94). Verified: the whole workspace builds and all tests pass on Rust 1.74.0. CI gained an MSRV job that builds and tests on 1.74, a `macos-latest` leg of the Rust test suite, and a short libFuzzer+ASan run (60s per target) of `fuzz_parse` and `fuzz_ffi_roundtrip`.
 

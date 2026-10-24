@@ -118,7 +118,7 @@ jobs:
       - name: Check soname and exported symbols (Linux)
         if: runner.os == 'Linux'
         run: |
-          cargo build --release -p cjson-rs-ffi
+          cargo build --release -p cjson-safe
           lib=target/release/libcjson.so
           readelf -d "$lib" | grep 'SONAME.*libcjson\.so\.1'
           # Only cJSON_* and cJSONUtils_* may be exported — no Rust internals.

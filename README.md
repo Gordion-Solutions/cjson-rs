@@ -1,8 +1,12 @@
-# cjson-rs
+# cjson-safe
 
-A memory-safe Rust JSON parser with a drop-in C ABI for [cJSON](https://github.com/DaveGamble/cJSON).
+A memory-safe drop-in for C's [cJSON](https://github.com/DaveGamble/cJSON): it builds `libcjson.{so,dylib,a}` with cJSON's ABI, so existing C/C++ consumers link against it unmodified.
 
-> **Status:** functional. 100% pass rate on the public-API subset of upstream cJSON's test suite. 78/78 cJSON.h functions implemented. Miri-clean on the unsafe FFI shim. Fuzzed (libfuzzer + AddressSanitizer) at ~4.5M iterations across two targets with no crashes — a baseline; extended multi-day runs are planned as part of the funded work.
+> **If you are writing Rust** and don't need cJSON's API or ABI, use [`serde_json`](https://crates.io/crates/serde_json) — this crate exists to replace C's libcjson safely, not to be a general-purpose Rust JSON library.
+
+> **Status:** functional. 100% pass rate on the public-API subset of upstream cJSON's test suite. 78/78 cJSON.h functions plus all 14 `cJSON_Utils` functions implemented. Not affected by CVE-2026-87933. Miri-clean on the unsafe FFI shim. Fuzzed (libfuzzer + AddressSanitizer) at ~4.5M iterations across two targets with no crashes — a baseline; extended multi-day runs are planned as part of the funded work.
+
+> **Published as** [`cjson-safe`](https://crates.io/crates/cjson-safe) on crates.io (the safe core is the separate `cjson-safe-core` crate, its engine). The repository stays `cjson-rs`.
 
 ## Quick example
 

@@ -20,7 +20,7 @@ fn version_returns_static_string() {
         let p = cJSON_Version();
         assert!(!p.is_null());
         let s = CStr::from_ptr(p).to_str().unwrap();
-        assert!(s.starts_with("cjson-rs"));
+        assert!(s.starts_with("cjson-safe"));
     }
 }
 

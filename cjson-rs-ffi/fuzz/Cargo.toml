@@ -1,5 +1,5 @@
 [package]
-name = "cjson-rs-fuzz"
+name = "cjson-safe-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
@@ -9,8 +9,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-cjson-rs-ffi = { path = ".." }
-cjson-rs = { path = "../../cjson-rs" }
+cjson-safe = { path = ".." }
+cjson-safe-core = { path = "../../cjson-rs" }
 
 # Keep this out of the parent workspace.
 [workspace]

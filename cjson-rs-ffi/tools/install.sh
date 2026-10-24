@@ -19,7 +19,7 @@ CJSON_ABI_VERSION=1.7.19
 here=$(cd "$(dirname "$0")" && pwd)
 ffi=$(cd "$here/.." && pwd)
 root=$(cd "$ffi/.." && pwd)
-(cd "$root" && cargo build -q --release -p cjson-rs-ffi)
+(cd "$root" && cargo build -q --release -p cjson-safe)
 rel="$root/target/release"
 d="$destdir$prefix"
 mkdir -p "$d/include/cjson" "$d/lib/pkgconfig" "$d/lib/cmake/cJSON"
