@@ -1,17 +1,18 @@
 [package]
-name = "cjson-rs"
-description = "Memory-safe Rust JSON parser, RFC 8259 conformant. Value model is binary-compatible with cJSON so the companion FFI crate can ship a drop-in libcjson replacement."
+name = "cjson-safe-core"
+description = "Safe-Rust engine behind cjson-safe. Not a general-purpose JSON library: if you are writing Rust and don't need cJSON's API or ABI, use serde_json."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-readme = "../README.md"
-keywords = ["json", "parser", "cjson", "memory-safety", "rfc8259"]
-categories = ["parser-implementations", "encoding"]
+keywords = ["json", "cjson", "memory-safety", "ffi", "rfc8259"]
+categories = ["parser-implementations"]
 
 [lib]
+# Import name stays `cjson_rs` so the cjson-safe crate's `use cjson_rs::…`
+# is unaffected by the package rename.
 name = "cjson_rs"
 path = "src/lib.rs"
 

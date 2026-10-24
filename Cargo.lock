@@ -3,18 +3,18 @@
 version = 4
 
 [[package]]
-name = "cjson-rs"
-version = "0.2.0"
+name = "cjson-safe"
+version = "0.3.0"
 dependencies = [
- "thiserror",
+ "cjson-safe-core",
+ "libc",
 ]
 
 [[package]]
-name = "cjson-rs-ffi"
-version = "0.2.0"
+name = "cjson-safe-core"
+version = "0.3.0"
 dependencies = [
- "cjson-rs",
- "libc",
+ "thiserror",
 ]
 
 [[package]]

@@ -9,7 +9,7 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 # Build first: cargo test doesn't update target/<profile>/, so copying
 # without building can stage a stale library.
 if [ "$profile" = release ]; then flag=--release; else flag="--profile $profile"; fi
-(cd "$root" && cargo build -q $flag -p cjson-rs-ffi)
+(cd "$root" && cargo build -q $flag -p cjson-safe)
 mkdir -p "$dir"
 case $(uname) in
   Darwin) cp "$root/target/$profile/libcjson.dylib" "$dir/libcjson.1.dylib"; ln -sf libcjson.1.dylib "$dir/libcjson.dylib" ;;

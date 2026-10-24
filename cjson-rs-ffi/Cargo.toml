@@ -1,12 +1,13 @@
 [package]
-name = "cjson-rs-ffi"
-description = "C ABI shim crate for cjson-rs — produces libcjson.{so,dylib,a}, a binary-compatible drop-in replacement for upstream libcjson. Existing C consumers link unmodified."
+name = "cjson-safe"
+description = "Memory-safe drop-in for C's libcjson: builds libcjson.{so,dylib,a} with cJSON's ABI, so existing C/C++ consumers link unmodified. If you are writing Rust and don't need cJSON's API or ABI, use serde_json."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+readme = "../README.md"
 build = "build.rs"
 keywords = ["cjson", "json", "ffi", "c-bindings", "memory-safety"]
 categories = ["external-ffi-bindings", "parser-implementations"]
@@ -19,5 +20,5 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
-cjson-rs = { path = "../cjson-rs" }
+cjson-safe-core = { path = "../cjson-rs", version = "0.3.0" }
 libc = "0.2"

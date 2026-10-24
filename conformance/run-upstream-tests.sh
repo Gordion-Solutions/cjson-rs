@@ -38,6 +38,9 @@ TESTS=(
     parse_examples
     parse_with_opts
     readme_examples
+    misc_utils_tests
+    old_utils_tests
+    json_patch_tests
 )
 
 # Compile + run each one. Per-test status accumulates in pass/fail.
