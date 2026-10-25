@@ -14,7 +14,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - name: Install Rust toolchain
@@ -30,11 +30,11 @@ jobs:
     name: MSRV (Rust 1.74)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - name: Install Rust 1.74
-        uses: dtolnay/rust-toolchain@1.74.0
+        uses: dtolnay/rust-toolchain@1.120.0
       - name: Cache cargo build artefacts
         uses: Swatinem/rust-cache@v2
       # Resolve a lockfile this toolchain can read (committed lock is v4).
@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: rust-tests
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - name: Install nightly + cargo-fuzz
@@ -72,7 +72,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: rust-tests
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - name: Install Rust toolchain
@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: rust-tests
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
       - name: Install Rust toolchain
@@ -105,7 +105,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo build artefacts
